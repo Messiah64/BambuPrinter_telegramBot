@@ -3,19 +3,15 @@ import asyncio
 from datetime import datetime, timedelta
 from telegram import Update, ForceReply
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
-from threading import Thread
-from flask import Flask
+from aiohttp import web
+import logging
 
-# Create a simple Flask app for health checks (required by Render)
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "Bot is running!"
-
-@app.route('/health')
-def health():
-    return "OK", 200
+# Set up logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
 # Conversation states for /use_now command
 NAME, DURATION = range(2)
@@ -28,6 +24,13 @@ printer_status = {
     "duration_hours": None,
     "chat_id": None
 }
+
+# Web server for health checks
+async def health_check(request):
+    return web.Response(text="OK", status=200)
+
+async def home(request):
+    return web.Response(text="Bot is running!", status=200)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send a message when the command /start is issued."""
@@ -204,13 +207,13 @@ async def cancel_use(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(f"✅ {user_name}'s reservation has been cancelled. Printer is now available!")
 
-def run_bot():
-    """Run the Telegram bot."""
+async def main():
+    """Start the bot."""
     # Get token from environment variable
     TOKEN = os.environ.get("BOT_TOKEN")
     
     if not TOKEN:
-        print("Error: BOT_TOKEN environment variable not set!")
+        logger.error("Error: BOT_TOKEN environment variable not set!")
         return
     
     # Create the Application
@@ -232,20 +235,36 @@ def run_bot():
     )
     application.add_handler(conv_handler)
 
-    # Run the bot
-    print("Bot is starting...")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
-
-def run_flask():
-    """Run the Flask web server for health checks."""
+    # Initialize the bot
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling()
+    
+    # Set up web server for health checks
+    app = web.Application()
+    app.router.add_get('/', home)
+    app.router.add_get('/health', health_check)
+    
+    # Get port from environment
     port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
+    
+    logger.info(f"Starting web server on port {port}")
+    logger.info("Bot is running...")
+    
+    # Start web server
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    
+    # Keep the bot running
+    try:
+        await asyncio.Event().wait()
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Bot is shutting down...")
+    finally:
+        await application.stop()
+        await runner.cleanup()
 
 if __name__ == "__main__":
-    # Start bot in a separate thread
-    bot_thread = Thread(target=run_bot)
-    bot_thread.daemon = True
-    bot_thread.start()
-    
-    # Start Flask server (this will keep the main thread running)
-    run_flask()
+    asyncio.run(main())
