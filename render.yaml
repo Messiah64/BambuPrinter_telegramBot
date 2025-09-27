@@ -1,0 +1,13 @@
+# render.yaml
+services:
+  - type: web
+    name: telegram-printer-bot
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python printer_bot.py
+    envVars:
+      - key: BOT_TOKEN
+        sync: false  # You'll set this in Render dashboard
+      - key: PYTHON_VERSION
+        value: 3.11.0
